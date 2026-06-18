@@ -6,7 +6,6 @@
   "scripts": {
     "dev": "ts-node-dev --respawn --transpile-only src/index.ts",
     "build": "tsc",
-    "deploy:cf": "npm run build && npx wrangler pages deploy dist --project-name=dailystack-hr-api",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

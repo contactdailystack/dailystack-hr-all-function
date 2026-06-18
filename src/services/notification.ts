@@ -223,7 +223,7 @@ export async function verifyLineSignature(
 ): Promise<boolean> {
   if (!config.line.channelSecret || !signature) return false;
 
-  const crypto = await import('crypto');
+  const crypto = await import('node:crypto');
   const hash = crypto
     .createHmac('SHA256', config.line.channelSecret)
     .update(body, 'utf8')

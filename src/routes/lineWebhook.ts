@@ -1,0 +1,132 @@
+import { Router, Request, Response } from 'express';
+import { asyncHandler } from '../middleware/auth';
+import { verifyLineSignature } from '../services/notification';
+import {
+  getLeaveRequestById,
+  approveLeaveRequest,
+  rejectLeaveRequest,
+  findEmployeeById,
+} from '../services/supabase';
+import { pushText } from '../services/notification';
+import { getSetting } from '../services/supabase';
+import { getLeaveLabel } from '../services/employee';
+import type { ApiResponse, LineWebhookEvent, PostbackData } from '../types';
+
+const router = Router();
+
+/**
+ * POST /line/webhook
+ * LINE Server-Side Verification (GET with hub.verify params)
+ */
+router.get('/line/webhook', (req: Request, res: Response) => {
+  const mode = req.query['hub.mode'] as string;
+  const token = req.query['hub.verify_token'] as string;
+  const challenge = req.query['hub.challenge'] as string;
+
+  const verifyToken = process.env.LINE_WEBHOOK_VERIFY_TOKEN;
+  if (mode === 'subscribe' && token === verifyToken) {
+    console.log('[LINE Webhook] Webhook verified');
+    res.status(200).send(challenge);
+  } else {
+    console.warn('[LINE Webhook] Verification failed — wrong token or mode');
+    res.sendStatus(403);
+  }
+});
+
+/**
+ * POST /line/webhook
+ * Receives LINE webhook events (postback, message, etc.)
+ */
+router.post(
+  '/line/webhook',
+  asyncHandler(async (req: Request, res: Response) => {
+    // 1. Verify LINE signature
+    const rawBody = JSON.stringify(req.body);
+    const signature = req.headers['x-line-signature'] as string | undefined;
+
+    const valid = await verifyLineSignature(rawBody, signature ?? null);
+    if (!valid) {
+      console.warn('[LINE Webhook] Invalid signature — rejected');
+      res.sendStatus(403);
+      return;
+    }
+
+    const events = req.body.events as LineWebhookEvent[];
+
+    for (const event of events) {
+      await handleWebhookEvent(event);
+    }
+
+    res.status(200).json({ success: true });
+  })
+);
+
+async function handleWebhookEvent(event: LineWebhookEvent): Promise<void> {
+  // Handle postback (e.g., approve/reject leave buttons)
+  if (event.type === 'postback' && event.postback?.data) {
+    let postbackData: PostbackData;
+    try {
+      postbackData = JSON.parse(event.postback.data);
+    } catch {
+      console.error('[LINE Webhook] Failed to parse postback data:', event.postback.data);
+      return;
+    }
+
+    if (!postbackData.action || !postbackData.requestId) return;
+
+    const { action, requestId, employeeId, employeeLineId } = postbackData;
+
+    // Get manager LINE ID to verify the approver is the manager
+    const managerLineId = await getSetting('LINE Manager ID');
+    const sourceUserId = event.source?.userId;
+
+    // Authorization check: only manager can approve/reject
+    if (sourceUserId !== managerLineId) {
+      console.warn('[LINE Webhook] Unauthorized approval attempt from', sourceUserId);
+      if (event.replyToken) {
+        await pushText(event.replyToken, '❌ คุณไม่มีสิทธิ์ดำเนินการนี้');
+      }
+      return;
+    }
+
+    try {
+      if (action === 'approve_leave') {
+        await approveLeaveRequest(requestId, managerLineId!);
+        await pushText(employeeLineId, '✅ คำขอลาของคุณได้รับการอนุมัติแล้ว');
+
+        if (event.replyToken) {
+          await pushText(event.replyToken, '✅ อนุมัติคำขอลาแล้ว');
+        }
+      } else if (action === 'reject_leave') {
+        await rejectLeaveRequest(requestId, managerLineId!);
+        await pushText(employeeLineId, '❌ คำขอลาของคุณไม่ได้รับการอนุมัติ');
+
+        if (event.replyToken) {
+          await pushText(event.replyToken, '❌ ปฏิเสธคำขอลาแล้ว');
+        }
+      }
+    } catch (err) {
+      console.error('[LINE Webhook] Leave action failed:', err);
+      if (event.replyToken) {
+        await pushText(event.replyToken, '❌ เกิดข้อผิดพลาด กรุณาลองใหม่');
+      }
+    }
+    return;
+  }
+
+  // Handle follow/unfollow events
+  if (event.type === 'follow') {
+    console.log('[LINE Webhook] User followed:', event.source?.userId);
+    return;
+  }
+
+  if (event.type === 'unfollow') {
+    console.log('[LINE Webhook] User unfollowed:', event.source?.userId);
+    return;
+  }
+
+  // Ignore other event types
+  console.log('[LINE Webhook] Unhandled event type:', event.type);
+}
+
+export default router;

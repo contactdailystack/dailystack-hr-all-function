@@ -1,0 +1,21 @@
+import type { Employee, Branch, ClockRecord, ScheduleAssignment, LeaveRequest, PayrollRecord } from '../types';
+export declare function findEmployeeByLineId(lineUserId: string): Promise<Employee | null>;
+export declare function findEmployeeById(id: string): Promise<Employee | null>;
+export declare function getActiveEmployees(): Promise<Employee[]>;
+export declare function getBranchByCode(code: string): Promise<Branch | null>;
+export declare function getMainBranch(): Promise<Branch | null>;
+export declare function getAllActiveBranches(): Promise<Branch[]>;
+export declare function getTodayClockRecord(employeeId: string): Promise<ClockRecord | null>;
+export declare function clockIn(employeeId: string, branchId: string | null, lat: number, lng: number, accuracy: number | null, geofenceValid: boolean): Promise<ClockRecord>;
+export declare function clockOut(recordId: string, lat: number, lng: number, accuracy: number | null, geofenceValid: boolean): Promise<ClockRecord>;
+export declare function getClockRecordsInRange(employeeId: string, startDate: string, endDate: string): Promise<ClockRecord[]>;
+export declare function getUpcomingScheduleAssignments(employeeId: string, days?: number): Promise<ScheduleAssignment[]>;
+export declare function getLeaveRequestsByEmployee(employeeId: string, year?: number): Promise<LeaveRequest[]>;
+export declare function getLeaveRequestById(requestId: string): Promise<LeaveRequest | null>;
+export declare function submitLeaveRequest(employeeId: string, leaveType: string, startDate: string, endDate: string | null, note: string | null, lineUserId: string): Promise<LeaveRequest>;
+export declare function approveLeaveRequest(requestId: string, approverId: string, managerNotes?: string): Promise<LeaveRequest>;
+export declare function rejectLeaveRequest(requestId: string, approverId: string, reason?: string): Promise<LeaveRequest>;
+export declare function getPayrollRecord(employeeId: string, month: number, year: number): Promise<PayrollRecord | null>;
+export declare function getApprovedLeavesInMonth(employeeId: string, month: number, year: number): Promise<LeaveRequest[]>;
+export declare function getSetting(key: string): Promise<string | null>;
+//# sourceMappingURL=supabase.d.ts.map

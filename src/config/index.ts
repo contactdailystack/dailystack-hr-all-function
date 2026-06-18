@@ -1,42 +1,37 @@
 import { createClient } from '@supabase/supabase-js';
-import dotenv from 'dotenv';
 
-dotenv.config();
+function getEnv(key: string, fallback = ''): string {
+  return (globalThis as unknown as Record<string, string>)[key]
+    || (typeof process !== 'undefined' ? (process.env as Record<string, string>)[key] : undefined)
+    || fallback;
+}
 
-// ─── Supabase Clients ────────────────────────────────────────────────────────
-// ✅ P0.2: แยก anon key (สำหรับ RLS) กับ service key (server-only admin operations)
-const supabaseUrl = process.env.SUPABASE_URL;
-const supabaseAnonKey = process.env.SUPABASE_ANON_KEY;
-const supabaseServiceKey = process.env.SUPABASE_SERVICE_KEY;
+const supabaseUrl = getEnv('SUPABASE_URL');
+const supabaseAnonKey = getEnv('SUPABASE_ANON_KEY');
+const supabaseServiceKey = getEnv('SUPABASE_SERVICE_KEY');
 
 if (!supabaseUrl || !supabaseAnonKey) {
   throw new Error('Missing SUPABASE_URL or SUPABASE_ANON_KEY environment variables');
 }
 
-// ✅ สำหรับ API ทั่วไป — RLS จะทำงานถูกต้อง
-export const supabase = createClient(supabaseUrl!, supabaseAnonKey!, {
+export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
   auth: { autoRefreshToken: false, persistSession: false },
 });
 
-// ✅ สำหรับ server-side admin operations (เช่น cross-user updates) — อย่า expose ผ่าน API สาธารณะ
 export const supabaseAdmin = supabaseServiceKey
-  ? createClient(supabaseUrl!, supabaseServiceKey!, {
+  ? createClient(supabaseUrl, supabaseServiceKey, {
       auth: { autoRefreshToken: false, persistSession: false },
     })
   : null;
 
-// ─── App Config ─────────────────────────────────────────────────────────────
-
 export const config = {
   line: {
-    channelAccessToken: process.env.LINE_CHANNEL_ACCESS_TOKEN || '',
-    channelSecret: process.env.LINE_CHANNEL_SECRET || '',
-    // ✅ P0.1: LIFF ID สำหรับ verify LINE ID Token
-    liffId: process.env.LINE_LIFF_ID || '',
+    channelAccessToken: getEnv('LINE_CHANNEL_ACCESS_TOKEN'),
+    channelSecret: getEnv('LINE_CHANNEL_SECRET'),
+    liffId: getEnv('LINE_LIFF_ID'),
   },
   geofence: {
     maxAccuracy: 50,
-    // ✅ P1.1: อัปเดตพิกัดจริง (2026-06-17)
     defaultBranch: {
       lat: 13.692087686713544,
       lng: 100.5281857510635,
@@ -44,9 +39,18 @@ export const config = {
     } as const,
   },
   server: {
-    port: parseInt(process.env.PORT || '3000', 10),
-    nodeEnv: process.env.NODE_ENV || 'development',
+    nodeEnv: getEnv('NODE_ENV', 'development'),
   },
 } as const;
+
+export type Env = {
+  SUPABASE_URL: string;
+  SUPABASE_ANON_KEY: string;
+  SUPABASE_SERVICE_KEY: string;
+  LINE_CHANNEL_ACCESS_TOKEN: string;
+  LINE_CHANNEL_SECRET: string;
+  LINE_LIFF_ID: string;
+  NODE_ENV: string;
+};
 
 export default config;

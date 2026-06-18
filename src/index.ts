@@ -1,101 +1,87 @@
-import express from 'express';
-import cors from 'cors';
-import dotenv from 'dotenv';
-// ✅ P0.3: Security middleware
-import helmet from 'helmet';
-import rateLimit from 'express-rate-limit';
+import { Hono } from 'hono';
+import { cors } from 'hono/cors';
+import { getEmployeeByLineId, getLeaveLabel } from './services/employee';
+import { getSetting, approveLeaveRequest, rejectLeaveRequest } from './services/supabase';
+import { pushText, verifyLineSignature } from './services/notification';
+import { errorHandler } from './middleware/auth';
+import { clockInRoute, clockOutRoute, getClockStatusRoute } from './routes/clock';
+import { getScheduleRoute } from './routes/schedule';
+import { submitLeaveRoute, getLeaveHistoryRoute } from './routes/leave';
+import { getPayslipRoute } from './routes/payslip';
+import { getProfileRoute } from './routes/profile';
+import type { Env } from './config';
+import type { LineWebhookEvent, PostbackData } from './types';
 
-dotenv.config();
+const app = new Hono<{ Bindings: Env }>();
 
-import clockRoutes from './routes/clock';
-import scheduleRoutes from './routes/schedule';
-import leaveRoutes from './routes/leave';
-import payslipRoutes from './routes/payslip';
-import profileRoutes from './routes/profile';
-import lineWebhookRouter from './routes/lineWebhook';
-import { config } from './config';
-
-const app = express();
-
-// ─── Security Middleware ─────────────────────────────────────────────────────
-
-// ✅ Helmet: secure HTTP headers (ป้องกัน XSS, clickjacking, sniffing)
-app.use(helmet());
-
-// ✅ CORS: whitelist เฉพาะ LINE LIFF domains
-const allowedOrigins = [
-  'https://liff.line.me',
-  // เพิ่ม production domain ตรงนี้:
-  // 'https://your-domain.com',
-];
-app.use(cors({
-  origin: (origin, callback) => {
-    // Allow requests with no origin (mobile apps, server-to-server)
-    if (!origin) return callback(null, true);
-    if (allowedOrigins.some(o => origin.startsWith(o))) {
-      return callback(null, true);
-    }
-    callback(new Error(`CORS: origin ${origin} not allowed`));
-  },
-  methods: ['POST', 'GET', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization'],
+app.use('*', cors({
+  origin: ['https://liff.line.me'],
+  allowMethods: ['POST', 'GET', 'OPTIONS'],
+  allowHeaders: ['Content-Type', 'Authorization'],
 }));
+app.use('*', errorHandler);
 
-// ✅ Rate Limiting: ป้องกัน abuse / DDoS
-const limiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 นาที
-  max: 100, // สูงสุด 100 requests ต่อ IP
-  standardHeaders: true,
-  legacyHeaders: false,
-  message: { success: false, error: 'Too many requests, please try again later.' },
-});
-app.use('/api/', limiter); // ใช้เฉพาะ API routes
+app.get('/health', c => c.json({ status: 'ok', timestamp: new Date().toISOString() }));
 
-// ─── Body Parser ─────────────────────────────────────────────────────────────
-
-app.use(express.json({ verify: (req, _res, buf) => { (req as unknown as Record<string, unknown>).rawBody = buf.toString(); } }));
-
-// ─── Routes ──────────────────────────────────────────────────────────────────
-
-app.use('/', clockRoutes);        // POST /clock_in, /clock_out, /get_clock_status
-app.use('/', scheduleRoutes);     // POST /get_schedule
-app.use('/', leaveRoutes);        // POST /submit_leave, /get_leave_history
-app.use('/', payslipRoutes);      // POST /get_payslip
-app.use('/', profileRoutes);      // POST /get_profile
-app.use('/', lineWebhookRouter);  // GET/POST /line/webhook
-
-// ─── Health Check ─────────────────────────────────────────────────────────────
-
-app.get('/health', (_req, res) => {
-  res.json({ status: 'ok', timestamp: new Date().toISOString() });
+app.get('/line/webhook', c => {
+  const mode = c.req.query('hub.mode');
+  const token = c.req.query('hub.verify_token');
+  const challenge = c.req.query('hub.challenge');
+  const verifyToken = (globalThis as unknown as Record<string,string>)['LINE_WEBHOOK_VERIFY_TOKEN'];
+  if (mode === 'subscribe' && token === verifyToken) { console.log('[LINE Webhook] Verified'); return c.text(challenge ?? '', 200); }
+  return c.text('Forbidden', 403);
 });
 
-// ─── 404 Handler ─────────────────────────────────────────────────────────────
-
-app.use((_req, res) => {
-  res.status(404).json({ success: false, error: 'Not found' });
+app.post('/line/webhook', async c => {
+  const rawBody = await c.req.text();
+  const signature = c.req.header('x-line-signature');
+  const valid = await verifyLineSignature(rawBody, signature ?? null);
+  if (!valid) { console.warn('[LINE Webhook] Invalid signature'); return c.json({ success: false }, 403); }
+  const body = JSON.parse(rawBody);
+  const events: LineWebhookEvent[] = body.events ?? [];
+  for (const event of events) { await handleWebhookEvent(event); }
+  return c.json({ success: true }, 200);
 });
 
-// ─── Global Error Handler ────────────────────────────────────────────────────
+async function handleWebhookEvent(event: LineWebhookEvent) {
+  if (event.type === 'postback' && event.postback?.data) {
+    let postbackData: PostbackData;
+    try { postbackData = JSON.parse(event.postback.data); }
+    catch { console.error('[LINE Webhook] Failed to parse postback'); return; }
+    const { action, requestId, employeeLineId } = postbackData;
+    if (!action || !requestId) return;
+    const managerLineId = await getSetting('LINE Manager ID');
+    const sourceUserId = event.source?.userId;
+    if (sourceUserId !== managerLineId) {
+      console.warn('[LINE Webhook] Unauthorized from', sourceUserId);
+      if (event.replyToken) await pushText(event.replyToken, 'Not authorized');
+      return;
+    }
+    try {
+      if (action === 'approve_leave') {
+        await approveLeaveRequest(requestId, managerLineId!);
+        await pushText(employeeLineId, 'Leave request approved');
+        if (event.replyToken) await pushText(event.replyToken, 'Leave approved');
+      } else if (action === 'reject_leave') {
+        await rejectLeaveRequest(requestId, managerLineId!);
+        await pushText(employeeLineId, 'Leave request rejected');
+        if (event.replyToken) await pushText(event.replyToken, 'Leave rejected');
+      }
+    } catch (err) { console.error('[LINE Webhook]', err); if (event.replyToken) await pushText(event.replyToken, 'Error'); }
+    return;
+  }
+  if (event.type === 'follow') { console.log('[LINE Webhook] Followed:', event.source?.userId); return; }
+  if (event.type === 'unfollow') { console.log('[LINE Webhook] Unfollowed:', event.source?.userId); return; }
+}
 
-app.use((err: Error, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
-  console.error('[Global Error]', err);
-  res.status(500).json({
-    success: false,
-    error: 'Internal server error',
-    message: process.env.NODE_ENV === 'development' ? err.message : undefined,
-  });
-});
-
-// ─── Start Server ────────────────────────────────────────────────────────────
-
-const port = config.server.port;
-
-app.listen(port, () => {
-  console.log(`🚀 DailyStack-HR API running on port ${port}`);
-  console.log(`   Environment: ${config.server.nodeEnv}`);
-  console.log(`   LINE configured: ${!!config.line.channelAccessToken}`);
-  console.log(`   Supabase configured: ${!!process.env.SUPABASE_URL}`);
-});
+app.post('/clock_in', clockInRoute);
+app.post('/clock_out', clockOutRoute);
+app.post('/get_clock_status', getClockStatusRoute);
+app.post('/get_schedule', getScheduleRoute);
+app.post('/submit_leave', submitLeaveRoute);
+app.post('/get_leave_history', getLeaveHistoryRoute);
+app.post('/get_payslip', getPayslipRoute);
+app.post('/get_profile', getProfileRoute);
+app.notFound(c => c.json({ success: false, error: 'Not found' }, 404));
 
 export default app;

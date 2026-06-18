@@ -1,4 +1,5 @@
 import { supabase } from '../config';
+const db = () => supabase.client;
 import type {
   Employee,
   Branch,
@@ -11,7 +12,7 @@ import type {
 // ─── Employee ────────────────────────────────────────────────────────────────
 
 export async function findEmployeeByLineId(lineUserId: string): Promise<Employee | null> {
-  const { data, error } = await supabase
+  const { data, error } = await db()
     .from('employees')
     .select('*')
     .eq('line_user_id', lineUserId)
@@ -23,7 +24,7 @@ export async function findEmployeeByLineId(lineUserId: string): Promise<Employee
 }
 
 export async function findEmployeeById(id: string): Promise<Employee | null> {
-  const { data, error } = await supabase
+  const { data, error } = await db()
     .from('employees')
     .select('*')
     .eq('id', id)
@@ -35,7 +36,7 @@ export async function findEmployeeById(id: string): Promise<Employee | null> {
 }
 
 export async function getActiveEmployees(): Promise<Employee[]> {
-  const { data, error } = await supabase
+  const { data, error } = await db()
     .from('employees')
     .select('*')
     .eq('status', 'active')
@@ -48,7 +49,7 @@ export async function getActiveEmployees(): Promise<Employee[]> {
 // ─── Branch ──────────────────────────────────────────────────────────────────
 
 export async function getBranchByCode(code: string): Promise<Branch | null> {
-  const { data, error } = await supabase
+  const { data, error } = await db()
     .from('branches')
     .select('*')
     .eq('code', code)
@@ -60,7 +61,7 @@ export async function getBranchByCode(code: string): Promise<Branch | null> {
 }
 
 export async function getMainBranch(): Promise<Branch | null> {
-  const { data, error } = await supabase
+  const { data, error } = await db()
     .from('branches')
     .select('*')
     .eq('is_main', true)
@@ -72,7 +73,7 @@ export async function getMainBranch(): Promise<Branch | null> {
 }
 
 export async function getAllActiveBranches(): Promise<Branch[]> {
-  const { data, error } = await supabase
+  const { data, error } = await db()
     .from('branches')
     .select('*')
     .eq('is_active', true);
@@ -86,7 +87,7 @@ export async function getAllActiveBranches(): Promise<Branch[]> {
 export async function getTodayClockRecord(employeeId: string): Promise<ClockRecord | null> {
   const today = new Date().toISOString().split('T')[0];
 
-  const { data, error } = await supabase
+  const { data, error } = await db()
     .from('clock_records')
     .select('*')
     .eq('employee_id', employeeId)
@@ -120,7 +121,7 @@ export async function clockIn(
     status: 'clocked_in',
   };
 
-  const { data, error } = await supabase
+  const { data, error } = await db()
     .from('clock_records')
     .insert(record)
     .select()
@@ -139,7 +140,7 @@ export async function clockOut(
 ): Promise<ClockRecord> {
   const now = new Date().toISOString();
 
-  const { data, error } = await supabase
+  const { data, error } = await db()
     .from('clock_records')
     .update({
       clock_out: now,
@@ -162,7 +163,7 @@ export async function getClockRecordsInRange(
   startDate: string,
   endDate: string
 ): Promise<ClockRecord[]> {
-  const { data, error } = await supabase
+  const { data, error } = await db()
     .from('clock_records')
     .select('*')
     .eq('employee_id', employeeId)
@@ -187,7 +188,7 @@ export async function getUpcomingScheduleAssignments(
   const todayStr = today.toISOString().split('T')[0];
   const endDateStr = endDate.toISOString().split('T')[0];
 
-  const { data, error } = await supabase
+  const { data, error } = await db()
     .from('schedule_assignments')
     .select('*')
     .eq('employee_id', employeeId)
@@ -206,7 +207,7 @@ export async function getLeaveRequestsByEmployee(
   employeeId: string,
   year?: number
 ): Promise<LeaveRequest[]> {
-  let query = supabase
+  let query = db()
     .from('leave_requests')
     .select('*')
     .eq('employee_id', employeeId)
@@ -223,7 +224,7 @@ export async function getLeaveRequestsByEmployee(
 }
 
 export async function getLeaveRequestById(requestId: string): Promise<LeaveRequest | null> {
-  const { data, error } = await supabase
+  const { data, error } = await db()
     .from('leave_requests')
     .select('*')
     .eq('id', requestId)
@@ -262,7 +263,7 @@ export async function submitLeaveRequest(
     updated_at: now,
   };
 
-  const { data, error } = await supabase
+  const { data, error } = await db()
     .from('leave_requests')
     .insert(record)
     .select()
@@ -277,7 +278,7 @@ export async function approveLeaveRequest(
   approverId: string,
   managerNotes?: string
 ): Promise<LeaveRequest> {
-  const { data, error } = await supabase
+  const { data, error } = await db()
     .from('leave_requests')
     .update({
       status: 'approved',
@@ -299,7 +300,7 @@ export async function rejectLeaveRequest(
   approverId: string,
   reason?: string
 ): Promise<LeaveRequest> {
-  const { data, error } = await supabase
+  const { data, error } = await db()
     .from('leave_requests')
     .update({
       status: 'rejected',
@@ -322,7 +323,7 @@ export async function getPayrollRecord(
   month: number,
   year: number
 ): Promise<PayrollRecord | null> {
-  const { data, error } = await supabase
+  const { data, error } = await db()
     .from('payroll_records')
     .select('*')
     .eq('employee_id', employeeId)
@@ -344,7 +345,7 @@ export async function getApprovedLeavesInMonth(
   const lastDay = new Date(year, month, 0).getDate();
   const endDate = `${year}-${String(month).padStart(2, '0')}-${lastDay}`;
 
-  const { data, error } = await supabase
+  const { data, error } = await db()
     .from('leave_requests')
     .select('*')
     .eq('employee_id', employeeId)
@@ -360,7 +361,7 @@ export async function getApprovedLeavesInMonth(
 // ─── Settings ────────────────────────────────────────────────────────────────
 
 export async function getSetting(key: string): Promise<string | null> {
-  const { data, error } = await supabase
+  const { data, error } = await db()
     .from('settings')
     .select('setting_value')
     .eq('setting_key', key)

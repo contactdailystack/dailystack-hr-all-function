@@ -1,0 +1,9 @@
+name = "dailystack-hr-api"
+main = "src/index.ts"
+compatibility_date = "2024-09-23"
+node_compat = true
+
+# Non-sensitive config values (safe to commit)
+[vars]
+NODE_ENV = "production"
+PORT = "3000"

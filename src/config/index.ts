@@ -10,19 +10,45 @@ const supabaseUrl = getEnv('SUPABASE_URL');
 const supabaseAnonKey = getEnv('SUPABASE_ANON_KEY');
 const supabaseServiceKey = getEnv('SUPABASE_SERVICE_KEY');
 
-if (!supabaseUrl || !supabaseAnonKey) {
-  throw new Error('Missing SUPABASE_URL or SUPABASE_ANON_KEY environment variables');
+function requireEnv(name: string, value: string | undefined): string {
+  if (!value) {
+    throw new Error(`Missing required environment variable: ${name}`);
+  }
+  return value;
 }
 
-export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
-  auth: { autoRefreshToken: false, persistSession: false },
-});
+// Lazy-initialized clients — only created when first accessed, not at import time.
+// This allows the Worker to start even if env vars are missing from local .dev.vars,
+// as long as the routes that need them are not called.
+let _supabase: ReturnType<typeof createClient> | null = null;
+let _supabaseAdmin: ReturnType<typeof createClient> | null = null;
 
-export const supabaseAdmin = supabaseServiceKey
-  ? createClient(supabaseUrl, supabaseServiceKey, {
-      auth: { autoRefreshToken: false, persistSession: false },
-    })
-  : null;
+function getSupabase(): ReturnType<typeof createClient> {
+  if (!_supabase) {
+    _supabase = createClient(
+      requireEnv('SUPABASE_URL', supabaseUrl),
+      requireEnv('SUPABASE_ANON_KEY', supabaseAnonKey),
+      { auth: { autoRefreshToken: false, persistSession: false } }
+    );
+  }
+  return _supabase;
+}
+
+function getSupabaseAdmin(): ReturnType<typeof createClient> | null {
+  if (!_supabaseAdmin) {
+    const serviceKey = requireEnv('SUPABASE_SERVICE_KEY', supabaseServiceKey);
+    _supabaseAdmin = createClient(
+      requireEnv('SUPABASE_URL', supabaseUrl),
+      serviceKey,
+      { auth: { autoRefreshToken: false, persistSession: false } }
+    );
+  }
+  return _supabaseAdmin;
+}
+
+// Named exports for route usage
+export const supabase = { get client() { return getSupabase(); } };
+export const supabaseAdmin = { get client() { return getSupabaseAdmin(); } };
 
 export const config = {
   line: {
